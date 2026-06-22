@@ -1,4 +1,4 @@
-import { Search, Eye, Edit, Trash2, DollarSign, TrendingDown, TrendingUp, X } from 'lucide-react';
+import { Search, Eye, Edit, Trash2, X } from 'lucide-react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { supabase } from '../lib/supabase';
 import { useState, useEffect } from 'react';

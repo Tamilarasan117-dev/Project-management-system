@@ -26,6 +26,8 @@ interface Task {
   assignedTo?: string; // Employee or Team Name
   role?: string;     // If individual
   documentUrl?: string;
+  documentFile?: File;
+  documentSize?: number;
   remarks?: string;
 }
 
@@ -185,19 +187,17 @@ export default function TaskManagement() {
         dbTask.document_url = publicUrlData.publicUrl;
       }
 
-      let savedTaskId = currentTask.id;
       if (currentTask.id) {
         const { error } = await supabase.from('tasks').update(dbTask).eq('id', currentTask.id);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from('tasks').insert([dbTask]).select();
+        const { error } = await supabase.from('tasks').insert([dbTask]).select();
         if (error) throw error;
-        savedTaskId = data?.[0]?.id;
       }
       
       // Automatic Document Sync
       if (currentTask.documentFile && currentTask.projectId) {
-        const sizeMB = (currentTask.documentSize / (1024 * 1024)).toFixed(2) + ' MB';
+        const sizeMB = ((currentTask.documentSize || 0) / (1024 * 1024)).toFixed(2) + ' MB';
         const dbDoc = {
           project_id: currentTask.projectId,
           milestone_id: currentTask.milestoneId || null,
