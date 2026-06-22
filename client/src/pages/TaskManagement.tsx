@@ -191,7 +191,7 @@ export default function TaskManagement() {
         const { error } = await supabase.from('tasks').update(dbTask).eq('id', currentTask.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('tasks').insert([dbTask]).select();
+        const { error } = await supabase.from('tasks').insert([dbTask]);
         if (error) throw error;
       }
       
