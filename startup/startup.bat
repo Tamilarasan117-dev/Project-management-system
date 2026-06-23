@@ -6,7 +6,7 @@ echo Starting CRM DIGITALIZATION
 echo ============================
 
 REM Change to project folder
-cd /d "D:\CRM Digitalization"
+cd /d "%~dp0.."
 
 REM Check if package.json exists
 if not exist package.json (
