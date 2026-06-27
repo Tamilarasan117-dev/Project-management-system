@@ -74,6 +74,7 @@ export default function DocumentManagement() {
   };
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState<'project' | 'billing'>('project');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [selectedMilestoneId, setSelectedMilestoneId] = useState('');
@@ -81,10 +82,14 @@ export default function DocumentManagement() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const filteredDocuments = documents.filter(d => 
-    d.fileName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    d.projectName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const isBillingDoc = (d: Document) => d.remarks && d.remarks.toLowerCase().includes('billing attachment');
+
+  const filteredDocuments = documents.filter(d => {
+    const matchesSearch = d.fileName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          d.projectName.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesTab = activeTab === 'billing' ? isBillingDoc(d) : !isBillingDoc(d);
+    return matchesSearch && matchesTab;
+  });
 
   const groupedDocs = filteredDocuments.reduce((acc: any, doc) => {
     const pTitle = `${doc.projectCode} - ${doc.projectName}`;
@@ -210,25 +215,48 @@ export default function DocumentManagement() {
 
   return (
     <div>
-      <div className="page-header">
-        <div style={{ position: 'relative', width: '300px' }}>
-          <Search size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)' }} />
-          <input
-            type="text"
-            className="form-input"
-            placeholder="Search documents..."
-            style={{ paddingLeft: '2.5rem' }}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      <div className="flex flex-col gap-4 mb-6">
+        <div className="flex justify-between items-center border-b border-border pb-4">
+          <div className="flex gap-4">
+            <button
+              className={`pb-2 ${activeTab === 'project' ? 'font-bold text-primary border-b-2' : 'text-muted'}`}
+              style={{ borderBottomColor: activeTab === 'project' ? 'var(--primary)' : 'transparent', borderBottomStyle: 'solid', borderBottomWidth: '2px', paddingBottom: '0.5rem', marginBottom: '-17px' }}
+              onClick={() => setActiveTab('project')}
+            >
+              Project Documents
+            </button>
+            <button
+              className={`pb-2 ${activeTab === 'billing' ? 'font-bold text-primary border-b-2' : 'text-muted'}`}
+              style={{ borderBottomColor: activeTab === 'billing' ? 'var(--primary)' : 'transparent', borderBottomStyle: 'solid', borderBottomWidth: '2px', paddingBottom: '0.5rem', marginBottom: '-17px' }}
+              onClick={() => setActiveTab('billing')}
+            >
+              Billing Documents
+            </button>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <div style={{ position: 'relative', width: '300px' }}>
+              <Search size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)' }} />
+              <input
+                type="text"
+                className="form-input"
+                placeholder={`Search ${activeTab} documents...`}
+                style={{ paddingLeft: '2.5rem' }}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            {activeTab === 'project' && (
+              <button 
+                className="btn btn-primary"
+                onClick={() => setIsModalOpen(true)}
+              >
+                <Upload size={18} style={{ marginRight: '0.5rem' }} />
+                Upload Document
+              </button>
+            )}
+          </div>
         </div>
-        <button 
-          className="btn btn-primary"
-          onClick={() => setIsModalOpen(true)}
-        >
-          <Upload size={18} style={{ marginRight: '0.5rem' }} />
-          Upload Document
-        </button>
       </div>
 
       <div className="card glass-card" style={{ padding: '1.5rem' }}>

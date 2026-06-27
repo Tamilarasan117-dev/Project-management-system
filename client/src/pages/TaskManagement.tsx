@@ -3,7 +3,7 @@ import { Search, Plus, Eye, Edit, Trash2, X, File } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 type Tab = 'individual' | 'team';
-type TaskStatus = 'Not Started' | 'Started' | 'In Progress' | 'On Hold' | 'Completed' | 'Blocked';
+type TaskStatus = 'Started' | 'In Progress' | 'Blocked' | 'Completed';
 
 interface Task {
   id: string;
@@ -169,6 +169,12 @@ export default function TaskManagement() {
       remarks: currentTask.remarks
     };
 
+    if (dbTask.status !== 'Blocked') {
+      if (dbTask.progress === 0) dbTask.status = 'Started';
+      else if (dbTask.progress === 100) dbTask.status = 'Completed';
+      else dbTask.status = 'In Progress';
+    }
+
     try {
       if (currentTask.documentFile) {
         const filePath = `public/${Date.now()}_${currentTask.documentFile.name}`;
@@ -212,6 +218,9 @@ export default function TaskManagement() {
         await supabase.from('documents').insert([dbDoc]);
       }
 
+      // Cascade Progress
+      await cascadeProgress(currentTask.milestoneId || '', currentTask.projectId || '');
+
       setIsModalOpen(false);
       setCurrentTask({});
       fetchTasks();
@@ -221,17 +230,55 @@ export default function TaskManagement() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (task: Task) => {
     if (confirm('Are you sure you want to delete this task?')) {
       try {
-        const { error } = await supabase.from('tasks').delete().eq('id', id);
+        const { error } = await supabase.from('tasks').delete().eq('id', task.id);
         if (error) throw error;
+        
+        // Cascade Progress after delete
+        await cascadeProgress(task.milestoneId || '', task.projectId || '');
+        
         fetchTasks();
       } catch (error: any) {
         console.error('Error deleting task:', error);
         alert('Failed to delete task: ' + (error.message || JSON.stringify(error)));
       }
     }
+  };
+
+  const cascadeProgress = async (milestoneId: string, projectId: string) => {
+    try {
+      if (milestoneId) {
+        const { data: mData } = await supabase.from('milestones').select('is_manual_progress, status').eq('id', milestoneId).single();
+        if (mData && !mData.is_manual_progress) {
+          const { data: tasks } = await supabase.from('tasks').select('progress').eq('milestone_id', milestoneId);
+          const count = tasks?.length || 0;
+          const sumP = tasks?.reduce((acc, t) => acc + (t.progress || 0), 0) || 0;
+          const newP = count > 0 ? Math.round(sumP / count) : 0;
+          let newS = mData.status;
+          if (newS !== 'Blocked') {
+             newS = newP === 0 ? 'Not Started' : newP === 100 ? 'Completed' : 'In Progress';
+          }
+          await supabase.from('milestones').update({ progress: newP, status: newS }).eq('id', milestoneId);
+        }
+      }
+      
+      if (projectId) {
+        const { data: pData } = await supabase.from('projects').select('is_manual_progress, status').eq('id', projectId).single();
+        if (pData && !pData.is_manual_progress) {
+          const { data: milestones } = await supabase.from('milestones').select('progress').eq('project_id', projectId);
+          const count = milestones?.length || 0;
+          const sumP = milestones?.reduce((acc, m) => acc + (m.progress || 0), 0) || 0;
+          const newP = count > 0 ? Math.round(sumP / count) : 0;
+          let newS = pData.status;
+          if (newS !== 'Blocked') {
+             newS = newP === 0 ? 'Started' : newP === 100 ? 'Completed' : 'In Progress';
+          }
+          await supabase.from('projects').update({ progress: newP, status: newS }).eq('id', projectId);
+        }
+      }
+    } catch(e) { console.error('Cascading progress failed:', e); }
   };
 
   return (
@@ -352,7 +399,7 @@ export default function TaskManagement() {
                       className="btn btn-outline" 
                       style={{ padding: '0.25rem 0.5rem', color: 'var(--destructive)' }} 
                       title="Delete"
-                      onClick={() => handleDelete(task.id)}
+                      onClick={() => handleDelete(task)}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -541,19 +588,34 @@ export default function TaskManagement() {
                 </div>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Status</label>
-                <select 
-                  className="form-input"
-                  value={currentTask.status}
-                  onChange={e => setCurrentTask({...currentTask, status: e.target.value as TaskStatus})}
-                >
-                  <option value="Started">Started</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Blocked">Blocked</option>
-                  <option value="Completed">Completed</option>
-                </select>
+              <div className="flex gap-4">
+                <div className="form-group flex-1">
+                  <label className="form-label">Progress (%)</label>
+                  <input 
+                    required 
+                    type="number" 
+                    min="0"
+                    max="100"
+                    className="form-input" 
+                    value={currentTask.progress || 0} 
+                    onChange={e => setCurrentTask({...currentTask, progress: parseInt(e.target.value) || 0})} 
+                  />
+                </div>
+                <div className="form-group flex-1">
+                  <label className="form-label">Status</label>
+                  <select 
+                    className="form-input"
+                    value={currentTask.status}
+                    onChange={e => setCurrentTask({...currentTask, status: e.target.value as TaskStatus})}
+                  >
+                    <option value="Started">Started</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Blocked">Blocked</option>
+                    <option value="Completed">Completed</option>
+                  </select>
+                </div>
               </div>
+              
               
               <div className="flex justify-end gap-2" style={{ marginTop: '1rem' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setIsModalOpen(false)}>
@@ -613,8 +675,10 @@ export default function TaskManagement() {
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Status</p>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Progress & Status</p>
                   <div className="flex items-center gap-3 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 h-[38px]">
+                    <span className="font-bold text-slate-700">{currentTask.progress || 0}%</span>
+                    <div style={{ height: '20px', width: '1px', backgroundColor: '#cbd5e1' }}></div>
                     <div>{getStatusBadge(currentTask.status as TaskStatus, currentTask.id || '')}</div>
                   </div>
                 </div>

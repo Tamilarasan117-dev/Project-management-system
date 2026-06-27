@@ -26,7 +26,7 @@ const CustomTaskListTable: React.FC<{
         const durationMs = t.end.getTime() - t.start.getTime();
         const durationDays = Math.max(1, Math.ceil(durationMs / (1000 * 60 * 60 * 24)));
         let expander = null;
-        if (t.type === 'project' || t.type === 'milestone') {
+        if (t.id.startsWith('p-') || t.id.startsWith('m-')) {
           expander = (
             <span style={{ display: 'inline-block', width: '16px', fontSize: '10px', textAlign: 'center', cursor: 'pointer', marginRight: '4px' }} onClick={() => onExpanderClick(t)}>
               {t.hideChildren ? '▶' : '▼'}
@@ -35,7 +35,7 @@ const CustomTaskListTable: React.FC<{
         } else {
            expander = <span style={{ display: 'inline-block', width: '20px' }}></span>;
         }
-        const paddingLeft = t.type === 'project' ? '10px' : t.type === 'milestone' ? '30px' : '50px';
+        const paddingLeft = t.id.startsWith('p-') ? '10px' : t.id.startsWith('m-') ? '30px' : '50px';
 
         return (
           <div 
@@ -80,14 +80,11 @@ export default function GanttChart() {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Month);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const getProgress = (status: string) => {
-    switch(status) {
-      case 'Completed': return 100;
-      case 'In Progress': return 50;
-      case 'Started': return 20;
-      case 'Blocked': return 10;
-      case 'Not Started': default: return 0;
-    }
+  const getColor = (status: string) => {
+    if (status === 'On Hold' || status === 'Hold') return '#854d0e'; // Brown
+    if (status === 'Completed') return '#22c55e'; // Green
+    if (status === 'Started' || status === 'In Progress') return '#eab308'; // Yellow
+    return '#94a3b8'; // Grey (Not Started)
   };
 
   const getValidDate = (...dateStrs: (string | null | undefined)[]) => {
@@ -143,17 +140,17 @@ export default function GanttChart() {
 
         const projectTask: Task = {
           id: `p-${p.id}`,
-          name: p.name,
+          name: `${p.name} - ${p.progress || 0}%`,
           type: 'project',
           start: pStart,
           end: pEnd,
-          progress: getProgress(p.status),
+          progress: p.progress || 0,
           isDisabled: true,
-          hideChildren: false,
+          hideChildren: true,
           styles: { 
-            progressColor: isProjectActual ? '#1e3a8a' : '#3b82f6', 
-            progressSelectedColor: isProjectActual ? '#1e3a8a' : '#2563eb',
-            backgroundColor: isProjectActual ? '#1e40af' : undefined
+            progressColor: getColor(p.status), 
+            progressSelectedColor: getColor(p.status),
+            backgroundColor: getColor(p.status)
           },
           statusStr: p.status
         } as any;
@@ -171,17 +168,17 @@ export default function GanttChart() {
 
           const milestoneTask: Task = {
              id: `m-${m.id}`,
-             name: m.name,
+             name: `${m.name} - ${m.progress || 0}%`,
              type: 'project',
              start: mStart,
              end: mEnd,
-             progress: getProgress(m.status),
+             progress: m.progress || 0,
              isDisabled: true,
-             hideChildren: false,
+             hideChildren: true,
              styles: { 
-               progressColor: isMilestoneActual ? '#854d0e' : '#eab308', 
-               progressSelectedColor: isMilestoneActual ? '#713f12' : '#ca8a04',
-               backgroundColor: isMilestoneActual ? '#a16207' : undefined
+               progressColor: getColor(m.status), 
+               progressSelectedColor: getColor(m.status),
+               backgroundColor: getColor(m.status)
              },
              project: `p-${p.id}`,
              statusStr: m.status
@@ -200,16 +197,16 @@ export default function GanttChart() {
 
           const taskObj: Task = {
              id: `t-${t.id}`,
-             name: t.title,
+             name: `${t.title} - ${t.progress || 0}%`,
              type: 'task',
              start: tStart,
              end: tEnd,
-             progress: getProgress(t.status),
+             progress: t.progress || 0,
              isDisabled: true,
              styles: { 
-               progressColor: isTaskActual ? '#14532d' : '#22c55e', 
-               progressSelectedColor: isTaskActual ? '#14532d' : '#16a34a',
-               backgroundColor: isTaskActual ? '#166534' : undefined
+               progressColor: getColor(t.status), 
+               progressSelectedColor: getColor(t.status),
+               backgroundColor: getColor(t.status)
              },
              project: t.milestone_id ? `m-${t.milestone_id}` : `p-${p.id}`,
              statusStr: t.status
@@ -221,9 +218,17 @@ export default function GanttChart() {
       });
       
       // Save all tasks in state, we'll filter them during render based on the active tab
-      // However, project and milestone without tasks might look empty in individual, 
-      // but the library handles it. We just store the two arrays.
-      setTasks(activeTab === 'team' ? formattedTasks : individualTasks);
+      // Preserve existing expanded/collapsed state if the task is already loaded
+      setTasks(prevTasks => {
+         const newTasks = activeTab === 'team' ? formattedTasks : individualTasks;
+         return newTasks.map(nt => {
+            const prev = prevTasks.find(pt => pt.id === nt.id);
+            if (prev && prev.hideChildren !== undefined) {
+               return { ...nt, hideChildren: prev.hideChildren };
+            }
+            return nt;
+         });
+      });
       
     } catch (error) {
       console.error('Error fetching Gantt data', error);
@@ -235,9 +240,40 @@ export default function GanttChart() {
   useEffect(() => {
     fetchData();
 
-    const subProjects = supabase.channel('gantt_projects').on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, fetchData).subscribe();
-    const subMilestones = supabase.channel('gantt_milestones').on('postgres_changes', { event: '*', schema: 'public', table: 'milestones' }, fetchData).subscribe();
-    const subTasks = supabase.channel('gantt_tasks').on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, fetchData).subscribe();
+    const handleDbChange = (payload: any, table: string) => {
+      if (payload.eventType === 'DELETE') {
+         setTasks(prev => prev.filter(t => t.id !== `${table.charAt(0)}-${payload.old.id}`));
+         return;
+      }
+      setTasks(prevTasks => {
+        const updated = payload.new;
+        return prevTasks.map(t => {
+          let prefix = table === 'projects' ? 'p-' : table === 'milestones' ? 'm-' : 't-';
+          if (t.id === `${prefix}${updated.id}`) {
+            const { start, end } = getSafeDates(updated.actual_start_date, updated.start_date, updated.planned_start_date, updated.actual_end_date, updated.end_date, updated.planned_end_date);
+            const newName = `${updated.name || updated.title} - ${updated.progress || 0}%`;
+            return {
+               ...t,
+               name: newName,
+               start,
+               end,
+               progress: updated.progress || 0,
+               statusStr: updated.status,
+               styles: {
+                 progressColor: getColor(updated.status),
+                 progressSelectedColor: getColor(updated.status),
+                 backgroundColor: getColor(updated.status)
+               }
+            };
+          }
+          return t;
+        });
+      });
+    };
+
+    const subProjects = supabase.channel('gantt_projects').on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (p) => handleDbChange(p, 'projects')).subscribe();
+    const subMilestones = supabase.channel('gantt_milestones').on('postgres_changes', { event: '*', schema: 'public', table: 'milestones' }, (p) => handleDbChange(p, 'milestones')).subscribe();
+    const subTasks = supabase.channel('gantt_tasks').on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => handleDbChange(p, 'tasks')).subscribe();
 
     return () => {
       supabase.removeChannel(subProjects);
@@ -375,16 +411,11 @@ export default function GanttChart() {
       
       <div className="flex flex-col gap-2 mt-2 text-sm text-muted">
         <div className="flex gap-4">
-          <div className="font-medium mr-2">Planned:</div>
-          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#3b82f6', borderRadius: '2px' }}></span> Project</div>
-          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#eab308', borderRadius: '2px' }}></span> Milestone</div>
-          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#22c55e', borderRadius: '2px' }}></span> Task</div>
-        </div>
-        <div className="flex gap-4">
-          <div className="font-medium mr-2">Actual:</div>
-          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#1e40af', borderRadius: '2px' }}></span> Project</div>
-          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#a16207', borderRadius: '2px' }}></span> Milestone</div>
-          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#166534', borderRadius: '2px' }}></span> Task</div>
+          <div className="font-medium mr-2">Legend:</div>
+          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#94a3b8', borderRadius: '2px' }}></span> Not Started</div>
+          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#eab308', borderRadius: '2px' }}></span> In Progress</div>
+          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#22c55e', borderRadius: '2px' }}></span> Completed</div>
+          <div className="flex items-center gap-2"><span style={{ width: '12px', height: '12px', backgroundColor: '#854d0e', borderRadius: '2px' }}></span> Hold</div>
         </div>
       </div>
     </div>

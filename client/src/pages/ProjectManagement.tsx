@@ -16,9 +16,13 @@ interface Project {
   plannedEndDate?: string;
   actualEndDate?: string;
   budget: number;
+  plannedBudget?: number;
   actualCost?: number;
+  progress?: number;
+  isManualProgress?: boolean;
   status: ProjectStatus;
   type?: 'Internal project' | 'External project';
+  managerName?: string;
 }
 
 export default function ProjectManagement() {
@@ -64,9 +68,13 @@ export default function ProjectManagement() {
         plannedEndDate: p.planned_end_date,
         actualEndDate: p.actual_end_date,
         budget: p.budget,
+        plannedBudget: p.planned_budget,
         actualCost: p.actual_cost,
         status: p.status,
-        type: p.type
+        type: p.type,
+        progress: p.progress || 0,
+        isManualProgress: p.is_manual_progress || false,
+        managerName: p.manager_name
       })) || [];
       
       setProjects(formattedProjects);
@@ -97,9 +105,17 @@ export default function ProjectManagement() {
       actual_start_date: currentProject.actualStartDate || null,
       actual_end_date: currentProject.actualEndDate || null,
       budget: currentProject.budget,
+      progress: currentProject.progress || 0,
+      is_manual_progress: currentProject.isManualProgress || false,
       status: currentProject.status || 'Started',
       type: currentProject.type || 'Internal project'
     };
+
+    if (dbProject.status !== 'On Hold') {
+      if (dbProject.progress === 0) dbProject.status = 'Started';
+      else if (dbProject.progress === 100) dbProject.status = 'Completed';
+      else dbProject.status = 'In Progress';
+    }
 
     try {
       if (currentProject.id) {
@@ -160,7 +176,6 @@ export default function ProjectManagement() {
         const { data: newProject, error } = await supabase.from('projects').insert([dbProject]).select().single();
         if (error) throw error;
         
-        // Auto-create standard milestones removed as per user request
         if (newProject) {
           // Re-apply the manually entered budget to override the database trigger
           if (currentProject.budget !== undefined) {
@@ -202,7 +217,10 @@ export default function ProjectManagement() {
     }
   };
 
-  const getStatusBadge = (status: ProjectStatus, id: string) => {
+  const getStatusBadge = (status: ProjectStatus, id?: string) => {
+    if (!id) {
+       return <span className={`badge ${status === 'Completed' ? 'badge-success' : status === 'In Progress' ? 'badge-primary' : 'badge-secondary'}`}>{status}</span>;
+    }
     return (
       <select 
         value={status || 'Started'}
@@ -261,7 +279,8 @@ export default function ProjectManagement() {
               <th>Budget</th>
               <th>Type</th>
               <th>Start Date</th>
-              <th>End Date</th>
+              <th>Manager</th>
+              <th>Progress</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -278,8 +297,16 @@ export default function ProjectManagement() {
                   </span>
                 </td>
                 <td>{project.startDate}</td>
-                <td>{project.endDate}</td>
-                <td>{getStatusBadge(project.status, project.id)}</td>
+                <td>{project.managerName || '-'}</td>
+                <td>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1" style={{ height: '6px', backgroundColor: 'var(--border)', borderRadius: '3px', overflow: 'hidden', width: '60px' }}>
+                      <div style={{ height: '100%', width: `${project.progress || 0}%`, backgroundColor: (project.progress || 0) === 100 ? 'var(--success)' : 'var(--primary)' }} />
+                    </div>
+                    <span className="text-xs font-medium">{project.progress || 0}%</span>
+                  </div>
+                </td>
+                <td>{getStatusBadge(project.status as ProjectStatus, project.id)}</td>
                 <td>
                   <div className="flex gap-2">
                     <button 
@@ -312,12 +339,12 @@ export default function ProjectManagement() {
             ))}
             {loading && (
               <tr>
-                <td colSpan={8} className="text-center py-4 text-muted">Loading projects from backend...</td>
+                <td colSpan={9} className="text-center py-4 text-muted">Loading projects from backend...</td>
               </tr>
             )}
             {!loading && filteredProjects.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center py-4 text-muted">No projects found.</td>
+                <td colSpan={9} className="text-center py-4 text-muted">No projects found.</td>
               </tr>
             )}
           </tbody>
@@ -408,17 +435,41 @@ export default function ProjectManagement() {
                     className="form-input" 
                     value={currentProject.budget !== undefined ? currentProject.budget : ''} 
                     onChange={e => {
-                      // Remove commas and non-numeric characters except decimal point
                       const val = e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '');
                       setCurrentProject({...currentProject, budget: val ? Number(val) : 0});
-                    }} 
+                    }}
                   />
                 </div>
                 <div className="form-group flex-1">
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="form-label" style={{ marginBottom: 0 }}>Progress (%)</label>
+                    <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={currentProject.isManualProgress || false}
+                        onChange={e => setCurrentProject({...currentProject, isManualProgress: e.target.checked})}
+                      />
+                      Override Auto-Calculation
+                    </label>
+                  </div>
+                  <input 
+                    type="number"
+                    min="0"
+                    max="100" 
+                    className="form-input" 
+                    value={currentProject.progress || 0} 
+                    disabled={!currentProject.isManualProgress}
+                    onChange={e => setCurrentProject({...currentProject, progress: parseInt(e.target.value) || 0})} 
+                    style={{ backgroundColor: !currentProject.isManualProgress ? '#f1f5f9' : 'white' }}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-4">
+                <div className="form-group flex-1">
                   <label className="form-label">Status</label>
                   <select 
-                    className="form-select"
-                    value={currentProject.status || 'Started'}
+                    className="form-input"
+                    value={currentProject.status}
                     onChange={e => setCurrentProject({...currentProject, status: e.target.value as ProjectStatus})}
                   >
                     <option value="Started">Started</option>
@@ -479,9 +530,11 @@ export default function ProjectManagement() {
                   </div>
                 </div>
                 <div className="col-span-2">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Description</p>
-                  <div className="text-sm font-medium text-slate-700 bg-slate-50 px-3 py-3 rounded-lg border border-slate-200 min-h-[80px]">
-                    {currentProject.description || 'No description provided.'}
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Progress & Status</p>
+                  <div className="flex items-center gap-3 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 h-[38px]">
+                    <span className="font-bold text-slate-700">{currentProject.progress || 0}% {currentProject.isManualProgress && '(Manual)'}</span>
+                    <div style={{ height: '20px', width: '1px', backgroundColor: '#cbd5e1' }}></div>
+                    <div>{getStatusBadge(currentProject.status as ProjectStatus)}</div>
                   </div>
                 </div>
                 <div>

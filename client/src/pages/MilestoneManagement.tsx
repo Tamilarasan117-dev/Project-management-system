@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Plus, Eye, Edit, Trash2, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-type MilestoneStatus = 'Not Started' | 'In Progress' | 'On Hold' | 'Completed';
+type MilestoneStatus = 'Not Started' | 'In Progress' | 'Completed';
 
 interface Milestone {
   id: string;
@@ -18,6 +18,8 @@ interface Milestone {
   actualEndDate?: string;
   plannedBudget?: number;
   actualCost?: number;
+  progress?: number;
+  isManualProgress?: boolean;
   status: MilestoneStatus;
 }
 
@@ -67,6 +69,8 @@ export default function MilestoneManagement() {
         actualEndDate: m.actual_end_date,
         plannedBudget: m.planned_budget,
         actualCost: m.actual_cost,
+        progress: m.progress || 0,
+        isManualProgress: m.is_manual_progress || false,
         status: m.status
       })) || [];
       
@@ -127,8 +131,14 @@ export default function MilestoneManagement() {
       planned_end_date: currentMilestone.plannedEndDate || currentMilestone.endDate,
       actual_start_date: currentMilestone.actualStartDate || null,
       actual_end_date: currentMilestone.actualEndDate || null,
+      progress: currentMilestone.progress || 0,
+      is_manual_progress: currentMilestone.isManualProgress || false,
       status: currentMilestone.status || 'Not Started'
     };
+
+    if (dbMilestone.progress === 0) dbMilestone.status = 'Not Started';
+    else if (dbMilestone.progress === 100) dbMilestone.status = 'Completed';
+    else dbMilestone.status = 'In Progress';
 
     try {
       if (currentMilestone.id) {
@@ -189,6 +199,23 @@ export default function MilestoneManagement() {
           }
         }
       }
+
+      // Cascade to Project
+      if (currentMilestone.projectId) {
+        const { data: pData } = await supabase.from('projects').select('is_manual_progress, status').eq('id', currentMilestone.projectId).single();
+        if (pData && !pData.is_manual_progress) {
+          const { data: milestonesData } = await supabase.from('milestones').select('progress').eq('project_id', currentMilestone.projectId);
+          const count = milestonesData?.length || 0;
+          const sumP = milestonesData?.reduce((acc, m) => acc + (m.progress || 0), 0) || 0;
+          const newP = count > 0 ? Math.round(sumP / count) : 0;
+          let newS = pData.status;
+          if (newS !== 'Blocked') {
+             newS = newP === 0 ? 'Started' : newP === 100 ? 'Completed' : 'In Progress';
+          }
+          await supabase.from('projects').update({ progress: newP, status: newS }).eq('id', currentMilestone.projectId);
+        }
+      }
+
       setIsModalOpen(false);
       setCurrentMilestone({});
       fetchMilestones();
@@ -441,17 +468,42 @@ export default function MilestoneManagement() {
                   />
                 </div>
               </div>
-              <div className="form-group">
-                <label className="form-label">Status</label>
-                <select 
-                  className="form-input"
-                  value={currentMilestone.status}
-                  onChange={e => setCurrentMilestone({...currentMilestone, status: e.target.value as MilestoneStatus})}
-                >
-                  <option value="Not Started">Not Started</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Completed">Completed</option>
-                </select>
+              <div className="flex gap-4">
+                <div className="form-group flex-1">
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="form-label" style={{ marginBottom: 0 }}>Progress (%)</label>
+                    <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={currentMilestone.isManualProgress || false}
+                        onChange={e => setCurrentMilestone({...currentMilestone, isManualProgress: e.target.checked})}
+                      />
+                      Override Auto-Calculation
+                    </label>
+                  </div>
+                  <input 
+                    type="number"
+                    min="0"
+                    max="100" 
+                    className="form-input" 
+                    value={currentMilestone.progress || 0} 
+                    disabled={!currentMilestone.isManualProgress}
+                    onChange={e => setCurrentMilestone({...currentMilestone, progress: parseInt(e.target.value) || 0})} 
+                    style={{ backgroundColor: !currentMilestone.isManualProgress ? '#f1f5f9' : 'white' }}
+                  />
+                </div>
+                <div className="form-group flex-1">
+                  <label className="form-label">Status</label>
+                  <select 
+                    className="form-input"
+                    value={currentMilestone.status}
+                    onChange={e => setCurrentMilestone({...currentMilestone, status: e.target.value as MilestoneStatus})}
+                  >
+                    <option value="Not Started">Not Started</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Completed">Completed</option>
+                  </select>
+                </div>
               </div>
               <div className="flex justify-end gap-2" style={{ marginTop: '1rem' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setIsModalOpen(false)}>
@@ -506,8 +558,10 @@ export default function MilestoneManagement() {
                   </div>
                 </div>
                 <div className="col-span-2">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Status</p>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Progress & Status</p>
                   <div className="flex items-center gap-3 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 h-[38px]">
+                    <span className="font-bold text-slate-700">{currentMilestone.progress || 0}% {currentMilestone.isManualProgress && '(Manual)'}</span>
+                    <div style={{ height: '20px', width: '1px', backgroundColor: '#cbd5e1' }}></div>
                     <div>{getStatusBadge(currentMilestone.status as MilestoneStatus, currentMilestone.id || '')}</div>
                   </div>
                 </div>
