@@ -111,3 +111,15 @@ dist
 # IDE
 .vscode/
 .idea/
+
+# Security - exclude test/debug files with hardcoded keys
+client/query*.js
+client/test-budget.*
+client/checkDB.cjs
+client/fetchData.mjs
+client/fetchTasks.cjs
+server/check.js
+server/check-columns.mjs
+
+# Large binary files
+*.zip
